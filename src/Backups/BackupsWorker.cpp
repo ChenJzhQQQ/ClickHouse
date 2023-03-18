@@ -542,7 +542,9 @@ void BackupsWorker::doRestore(
             restore_coordination = makeRestoreCoordination(context, restore_settings, /* remote= */ on_cluster);
 
         if (!allow_concurrent_restores && restore_coordination->hasConcurrentRestores(std::ref(num_active_restores)))
-            throw Exception(ErrorCodes::CONCURRENT_ACCESS_NOT_SUPPORTED, "Concurrent restores not supported, turn on setting 'allow_concurrent_restores'");
+            throw Exception(
+                ErrorCodes::CONCURRENT_ACCESS_NOT_SUPPORTED,
+                "Concurrent restores not supported, turn on setting 'allow_concurrent_restores'");
 
         /// Do RESTORE.
         if (on_cluster)
