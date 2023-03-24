@@ -176,13 +176,13 @@ size_t BackupCoordinationRemote::findCurrentHostIndex(const Strings & all_hosts,
 
 
 BackupCoordinationRemote::BackupCoordinationRemote(
-    const BackupCoordinationStageSync::CoordinationSettings & keeper_settings_,
-    const String & root_zookeeper_path_,
-    const String & current_host_,
-    const String & backup_uuid_,
-    zkutil::GetZooKeeper get_zookeeper_,
-    const Strings & all_hosts_,
-    bool is_internal_)
+        zkutil::GetZooKeeper get_zookeeper_,
+        const String & root_zookeeper_path_,
+        const BackupKeeperSettings & keeper_settings_,
+        const String & backup_uuid_,
+        const Strings & all_hosts_,
+        const String & current_host_,
+        bool is_internal_)
     : get_zookeeper(get_zookeeper_)
     , root_zookeeper_path(root_zookeeper_path_)
     , zookeeper_path(root_zookeeper_path_ + "/backup-" + backup_uuid_)

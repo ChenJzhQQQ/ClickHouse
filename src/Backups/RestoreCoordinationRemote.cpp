@@ -4,6 +4,7 @@
 #include <Functions/UserDefined/UserDefinedSQLObjectType.h>
 #include <Common/ZooKeeper/KeeperException.h>
 #include <Common/escapeForFileName.h>
+#include "Backups/BackupCoordinationStageSync.h"
 
 namespace DB
 {
@@ -29,7 +30,7 @@ RestoreCoordinationRemote::RestoreCoordinationRemote(
     createRootNodes();
 
     stage_sync.emplace(
-        zookeeper_path, settings, [this] { return getZooKeeper(); }, &Poco::Logger::get("RestoreCoordination"));
+        zookeeper_path, BackupCoordinationStageSync::BackupKeeperSettings{}, [this] { return getZooKeeper(); }, &Poco::Logger::get("RestoreCoordination"));
 }
 
 RestoreCoordinationRemote::~RestoreCoordinationRemote()

@@ -18,15 +18,15 @@ constexpr size_t MAX_ZOOKEEPER_ATTEMPTS = 10;
 class BackupCoordinationRemote : public IBackupCoordination
 {
 public:
-    using CoordinationSettings = BackupCoordinationStageSync::CoordinationSettings;
+    using BackupKeeperSettings = BackupCoordinationStageSync::BackupKeeperSettings;
 
     BackupCoordinationRemote(
-        const CoordinationSettings & keeper_settings_,
-        const String & root_zookeeper_path_,
-        const String & current_host_,
-        const String & backup_uuid_,
         zkutil::GetZooKeeper get_zookeeper_,
+        const String & root_zookeeper_path_,
+        const BackupKeeperSettings & keeper_settings_,
+        const String & backup_uuid_,
         const Strings & all_hosts_,
+        const String & current_host_,
         bool is_internal_);
 
     ~BackupCoordinationRemote() override;

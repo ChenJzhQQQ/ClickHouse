@@ -19,7 +19,7 @@ namespace ErrorCodes
 
 
 BackupCoordinationStageSync::BackupCoordinationStageSync(
-    const String & root_zookeeper_path_, CoordinationSettings settings_, zkutil::GetZooKeeper get_zookeeper_, Poco::Logger * log_)
+    const String & root_zookeeper_path_, BackupKeeperSettings settings_, zkutil::GetZooKeeper get_zookeeper_, Poco::Logger * log_)
     : zookeeper_path(root_zookeeper_path_ + "/stage")
     , get_zookeeper(get_zookeeper_)
     , log(log_)
