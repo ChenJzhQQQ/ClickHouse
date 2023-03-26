@@ -24,7 +24,8 @@ namespace ErrorCodes
 
 
 InterpreterShowTablesQuery::InterpreterShowTablesQuery(const ASTPtr & query_ptr_, ContextMutablePtr context_)
-    : WithMutableContext(context_), query_ptr(query_ptr_)
+    : WithMutableContext(context_)
+    , query_ptr(query_ptr_)
 {
 }
 
