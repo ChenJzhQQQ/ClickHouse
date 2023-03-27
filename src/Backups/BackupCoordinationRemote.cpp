@@ -1,14 +1,16 @@
 #include <Backups/BackupCoordinationRemote.h>
+
 #include <Access/Common/AccessEntityType.h>
+#include <Backups/BackupCoordinationStage.h>
+#include <base/hex.h>
+#include "Common/ZooKeeper/Common.h"
+#include <Common/escapeForFileName.h>
+#include <Common/ZooKeeper/KeeperException.h>
 #include <Functions/UserDefined/UserDefinedSQLObjectType.h>
 #include <IO/ReadBufferFromString.h>
 #include <IO/ReadHelpers.h>
 #include <IO/WriteBufferFromString.h>
 #include <IO/WriteHelpers.h>
-#include <Common/ZooKeeper/KeeperException.h>
-#include <Common/escapeForFileName.h>
-#include <base/hex.h>
-#include <Backups/BackupCoordinationStage.h>
 
 
 namespace DB
@@ -104,33 +106,24 @@ namespace
         }
     };
 
-    String serializeFileInfo(const FileInfo & info)
+    String serializeStampedFileInfo(size_t host_id, const FileInfo & info)
     {
         WriteBufferFromOwnString out;
-        writeBinary(info.file_name, out);
-        writeBinary(info.size, out);
-        writeBinary(info.checksum, out);
-        writeBinary(info.base_size, out);
-        writeBinary(info.base_checksum, out);
-        writeBinary(info.data_file_name, out);
-        writeBinary(info.archive_suffix, out);
-        writeBinary(info.pos_in_archive, out);
+        info.serialize(out);
+        writeBinary(host_id, out);
         return out.str();
     }
 
-    FileInfo deserializeFileInfo(const String & str)
+    std::pair<ssize_t, FileInfo> deserializeStampedFileInfo(const String & str)
     {
+        ssize_t host_id = -1;
         FileInfo info;
         ReadBufferFromString in{str};
-        readBinary(info.file_name, in);
-        readBinary(info.size, in);
-        readBinary(info.checksum, in);
-        readBinary(info.base_size, in);
-        readBinary(info.base_checksum, in);
-        readBinary(info.data_file_name, in);
-        readBinary(info.archive_suffix, in);
-        readBinary(info.pos_in_archive, in);
-        return info;
+        info.deserialize(in);
+        /// For compatibility with old versions
+        if (!in.eof())
+            readBinary(host_id, in);
+        return {host_id, info};
     }
 
     String serializeSizeAndChecksum(const SizeAndChecksum & size_and_checksum)
@@ -176,13 +169,13 @@ size_t BackupCoordinationRemote::findCurrentHostIndex(const Strings & all_hosts,
 
 
 BackupCoordinationRemote::BackupCoordinationRemote(
-        zkutil::GetZooKeeper get_zookeeper_,
-        const String & root_zookeeper_path_,
-        const BackupKeeperSettings & keeper_settings_,
-        const String & backup_uuid_,
-        const Strings & all_hosts_,
-        const String & current_host_,
-        bool is_internal_)
+    zkutil::GetZooKeeper get_zookeeper_,
+    const String & root_zookeeper_path_,
+    const BackupKeeperSettings & keeper_settings_,
+    const String & backup_uuid_,
+    const Strings & all_hosts_,
+    const String & current_host_,
+    bool is_internal_)
     : get_zookeeper(get_zookeeper_)
     , root_zookeeper_path(root_zookeeper_path_)
     , zookeeper_path(root_zookeeper_path_ + "/backup-" + backup_uuid_)
@@ -582,12 +575,25 @@ void BackupCoordinationRemote::addFileInfo(const FileInfo & file_info, bool & is
                 return;
             }
 
+            /// Given the fact that we do retries, the error code ZNODEEXISTS can be in two cases:
+            /// 1) The node was normally created before or by other replica (just like it could be without retries)
+            /// 2) We lost the connection after the request was processed by [Zoo]Keeeper and we tried to create it again
+            /// To understand what happened we write a host identifier to the node and have to recheck it in a worst case.
+
             full_path = zookeeper_path + "/file_infos/" + size_and_checksum;
-            auto code = zk->tryCreate(full_path, serializeFileInfo(file_info), zkutil::CreateMode::Persistent);
+            auto code = zk->tryCreate(full_path, serializeStampedFileInfo(current_host_index, file_info), zkutil::CreateMode::Persistent);
             if ((code != Coordination::Error::ZOK) && (code != Coordination::Error::ZNODEEXISTS))
                 throw zkutil::KeeperException(code, full_path);
 
-            is_data_file_required = (code == Coordination::Error::ZOK) && (file_info.size > file_info.base_size);
+            if (code == Coordination::Error::ZOK)
+            {
+                is_data_file_required = file_info.size > file_info.base_size;
+                return;
+            }
+
+            auto [host_id, _] = deserializeStampedFileInfo(zk->get(full_path));
+            /// Value -1 means that another replica with older version didn't write its host id to the node.
+            is_data_file_required = host_id == -1 || host_id == static_cast<ssize_t>(current_host_index);
         });
 }
 
@@ -605,13 +611,13 @@ void BackupCoordinationRemote::updateFileInfo(const FileInfo & file_info)
             String size_and_checksum = serializeSizeAndChecksum(std::pair{file_info.size, file_info.checksum});
             String full_path = zookeeper_path + "/file_infos/" + size_and_checksum;
 
-            /// FIXME: Do we need internal retries?
+            /// FIXME: Probably better to use retries_ctl for this purpose?
             for (size_t attempt = 0; attempt < MAX_ZOOKEEPER_ATTEMPTS; ++attempt)
             {
                 Coordination::Stat stat;
-                auto new_info = deserializeFileInfo(zk->get(full_path, &stat));
+                auto [_, new_info] = deserializeStampedFileInfo(zk->get(full_path, &stat));
                 new_info.archive_suffix = file_info.archive_suffix;
-                auto code = zk->trySet(full_path, serializeFileInfo(new_info), stat.version);
+                auto code = zk->trySet(full_path, serializeStampedFileInfo(current_host_index, new_info), stat.version);
                 if (code == Coordination::Error::ZOK)
                     return;
                 bool is_last_attempt = (attempt == MAX_ZOOKEEPER_ATTEMPTS - 1);
@@ -745,10 +751,9 @@ std::vector<FileInfo> BackupCoordinationRemote::getAllFileInfos() const
         /// Process non empty files
         for (size_t i = 0; i < non_empty_file_names.size(); ++i)
         {
-            FileInfo file_info;
             if (non_empty_file_infos_serialized[i].error != Coordination::Error::ZOK)
                 throw zkutil::KeeperException(non_empty_file_infos_serialized[i].error);
-            file_info = deserializeFileInfo(non_empty_file_infos_serialized[i].data);
+            auto [_, file_info] = deserializeStampedFileInfo(non_empty_file_infos_serialized[i].data);
             file_info.file_name = unescapeForFileName(non_empty_file_names[i]);
             non_empty_files_infos.emplace_back(std::move(file_info));
         }
@@ -853,7 +858,7 @@ std::optional<FileInfo> BackupCoordinationRemote::getFileInfo(const String & fil
             UInt64 size = deserializeSizeAndChecksum(size_and_checksum).first;
             FileInfo file_info;
             if (size) /// we don't keep FileInfos for empty files
-                file_info = deserializeFileInfo(zk->get(zookeeper_path + "/file_infos/" + size_and_checksum));
+                file_info = deserializeStampedFileInfo(zk->get(zookeeper_path + "/file_infos/" + size_and_checksum)).second;
             file_info.file_name = file_name;
             result = std::move(file_info);
         });
@@ -877,7 +882,8 @@ std::optional<FileInfo> BackupCoordinationRemote::getFileInfo(const SizeAndCheck
                 result = std::nullopt;
                 return;
             }
-            result = deserializeFileInfo(file_info_str);
+            auto [_, file_info] = deserializeStampedFileInfo(file_info_str);
+            result = std::move(file_info);
         });
 
     return result;

@@ -1,12 +1,12 @@
 #include <Backups/BackupCoordinationStageSync.h>
+
+#include <base/chrono_io.h>
+#include <Common/Exception.h>
+#include <Common/ZooKeeper/KeeperException.h>
 #include <IO/ReadBufferFromString.h>
 #include <IO/ReadHelpers.h>
 #include <IO/WriteBufferFromString.h>
 #include <IO/WriteHelpers.h>
-#include <base/chrono_io.h>
-#include <Common/Exception.h>
-#include <Common/ZooKeeper/KeeperException.h>
-#include <Common/ZooKeeper/ZooKeeperWithFaultInjection.h>
 
 
 namespace DB
@@ -136,6 +136,7 @@ BackupCoordinationStageSync::State BackupCoordinationStageSync::readCurrentState
             /// Because we do retries everywhere we can't fully rely on ephemeral nodes anymore.
             /// Though we recreate "alive" node when reconnecting it might be not enough and race condition is possible.
             /// And everything we can do here - just retry.
+            /// In worst case when we won't manage to see the alive node for a long time we will just abort the backup.
             unready_host_state.alive = zk_nodes_set.contains(alive_node_name);
             if (!unready_host_state.alive)
             {
@@ -152,8 +153,9 @@ BackupCoordinationStageSync::State BackupCoordinationStageSync::readCurrentState
                             return;
                         }
 
+                        // Retry with backoff. We also check whether it is last retry or no, because we won't to rethrow an exception.
                         if (!retries_ctl.isLastRetry())
-                            retries_ctl.requestUnconditionalRetry();
+                            retries_ctl.setKeeperError(Coordination::Error::ZNONODE, "There is no alive node for host {}. Will retry", host);
                     });
             }
             LOG_TRACE(log, "Host ({}) appeared to be {}", host, unready_host_state.alive ? "alive" : "dead");

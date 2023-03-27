@@ -1,7 +1,7 @@
 #pragma once
 
-#include <Backups/BackupCoordinationStageSync.h>
 #include <Backups/IRestoreCoordination.h>
+#include <Backups/BackupCoordinationStageSync.h>
 
 
 namespace DB
