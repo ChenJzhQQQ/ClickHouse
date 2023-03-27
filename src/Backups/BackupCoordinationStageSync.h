@@ -1,7 +1,7 @@
 #pragma once
 
 #include <Common/ZooKeeper/Common.h>
-#include "Storages/MergeTree/ZooKeeperRetries.h"
+#include <Storages/MergeTree/ZooKeeperRetries.h>
 
 
 namespace DB

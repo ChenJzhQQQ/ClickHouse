@@ -1,0 +1,9 @@
+<clickhouse>
+    <profiles>
+        <default>
+            <backup_keeper_max_retries>10</backup_keeper_max_retries>
+            <backup_keeper_retry_initial_backoff_ms>1</backup_keeper_retry_initial_backoff_ms>
+            <backup_keeper_retry_max_backoff_ms>1</backup_keeper_retry_max_backoff_ms>
+        </default>
+    </profiles>
+</clickhouse>

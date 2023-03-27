@@ -40,7 +40,6 @@ public:
     bool isExpired() const override { return expired; }
     int64_t getSessionID() const override { return 0; }
 
-
     void create(
             const String & path,
             const String & data,
