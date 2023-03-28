@@ -6,6 +6,8 @@
 #include <Backups/BackupCoordinationReplicatedTables.h>
 #include <Backups/BackupCoordinationStageSync.h>
 #include <Storages/MergeTree/ZooKeeperRetries.h>
+#include <Common/ZooKeeper/Common.h>
+#include <Common/ZooKeeper/ZooKeeperWithFaultInjection.h>
 
 
 namespace DB
@@ -78,8 +80,11 @@ public:
     static size_t findCurrentHostIndex(const Strings & all_hosts, const String & current_host);
 
 private:
-    zkutil::ZooKeeperPtr getZooKeeper() const;
-    zkutil::ZooKeeperPtr getZooKeeperNoLock() const;
+    using FaultyKeeper = Coordination::ZooKeeperWithFaultInjection::Ptr;
+
+    FaultyKeeper getFaultyZooKeeper() const;
+    void renewZooKeeper(FaultyKeeper my_faulty_zookeeper) const;
+
     void createRootNodes();
     void removeAllNodes();
 
@@ -90,6 +95,7 @@ private:
     void prepareReplicatedAccess() const;
     void prepareReplicatedSQLObjects() const;
 
+    /// get_zookeeper callback will provide a zookeeper client without any fault injection
     const zkutil::GetZooKeeper get_zookeeper;
     const String root_zookeeper_path;
     const String zookeeper_path;

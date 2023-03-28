@@ -52,6 +52,7 @@ class ZooKeeperWithFaultInjection
     const UInt64 seed = 0;
 
     std::vector<std::string> ephemeral_nodes;
+    std::vector<zkutil::EventPtr> watches;
 
     ZooKeeperWithFaultInjection(
         zk::Ptr const & keeper_,
@@ -114,6 +115,7 @@ public:
 
     void setKeeper(zk::Ptr const & keeper_) { keeper = keeper_; }
     bool isNull() const { return keeper.get() == nullptr; }
+    bool expired() { return keeper->expired(); }
 
     ///
     /// mirror ZooKeeper interface
@@ -125,6 +127,7 @@ public:
         const zkutil::EventPtr & watch = nullptr,
         Coordination::ListRequestType list_request_type = Coordination::ListRequestType::ALL)
     {
+        watches.emplace_back(watch);
         return access("getChildren", path, [&]() { return keeper->getChildren(path, stat, watch, list_request_type); });
     }
 
@@ -135,6 +138,7 @@ public:
         const zkutil::EventPtr & watch = nullptr,
         Coordination::ListRequestType list_request_type = Coordination::ListRequestType::ALL)
     {
+        watches.emplace_back(watch);
         return access("tryGetChildren", path, [&]() { return keeper->tryGetChildren(path, res, stat, watch, list_request_type); });
     }
 
@@ -155,6 +159,7 @@ public:
         const zkutil::EventPtr & watch = nullptr,
         Coordination::Error * code = nullptr)
     {
+        watches.emplace_back(watch);
         return access("tryGet", path, [&]() { return keeper->tryGet(path, res, stat, watch, code); });
     }
 
@@ -219,6 +224,7 @@ public:
 
     std::string get(const std::string & path, Coordination::Stat * stat = nullptr, const zkutil::EventPtr & watch = nullptr)
     {
+        watches.emplace_back(watch);
         return access("get", path, [&]() { return keeper->get(path, stat, watch); });
     }
 
@@ -229,6 +235,7 @@ public:
 
     bool exists(const std::string & path, Coordination::Stat * stat = nullptr, const zkutil::EventPtr & watch = nullptr)
     {
+        watches.emplace_back(watch);
         return access("exists", path, [&]() { return keeper->exists(path, stat, watch); });
     }
 
@@ -278,6 +285,61 @@ public:
         return path_created;
     }
 
+    Coordination::Error tryCreate(const std::string & path, const std::string & data, int32_t mode, std::string & path_created)
+    {
+        auto error = access(
+            "tryCreate",
+            path,
+            [&]() { return keeper->tryCreate(path, data, mode, path_created); },
+            [&](Coordination::Error &)
+            {
+                try
+                {
+                    if (mode == zkutil::CreateMode::EphemeralSequential || mode == zkutil::CreateMode::Ephemeral)
+                    {
+                        keeper->remove(path);
+                        if (unlikely(logger))
+                            LOG_TRACE(logger, "ZooKeeperWithFaultInjection cleanup: seed={} func={} path={}", seed, "tryCreate", path);
+                    }
+                }
+                catch (const zkutil::KeeperException & e)
+                {
+                    if (unlikely(logger))
+                        LOG_TRACE(
+                            logger,
+                            "ZooKeeperWithFaultInjection cleanup FAILED: seed={} func={} path={} code={} message={} ",
+                            seed,
+                            "tryCreate",
+                            path,
+                            e.code,
+                            e.message());
+                }
+            });
+
+        /// collect ephemeral nodes when no fault was injected (to clean up later)
+        if (unlikely(fault_policy))
+        {
+            if (mode == zkutil::CreateMode::EphemeralSequential || mode == zkutil::CreateMode::Ephemeral)
+                ephemeral_nodes.push_back(path);
+        }
+
+        return error;
+    }
+
+    Coordination::Error tryCreate(const std::string & path, const std::string & data, int32_t mode)
+    {
+        String path_created;
+        return tryCreate(path, data, mode, path_created);
+    }
+
+    void createIfNotExists(const std::string & path, const std::string & data)
+    {
+        access(
+            "tryCreate",
+            path,
+            [&]() { return keeper->createIfNotExists(path, data); });
+    }
+
     Coordination::Responses multi(const Coordination::Requests & requests)
     {
         constexpr auto method = "multi";
@@ -304,6 +366,21 @@ public:
     Coordination::Error tryRemove(const std::string & path, int32_t version = -1)
     {
         return access("tryRemove", path, [&]() { return keeper->tryRemove(path, version); });
+    }
+
+    void removeRecursive(const std::string & path)
+    {
+        return access("removeRecursive", path, [&]() { return keeper->removeRecursive(path); });
+    }
+
+    std::string sync(const std::string & path)
+    {
+        return access("sync", path, [&]() { return keeper->sync(path); });
+    }
+
+    Coordination::Error trySet(const std::string & path, const std::string & data, int32_t version = -1, Coordination::Stat * stat = nullptr)
+    {
+        return access("trySet", path, [&]() { return keeper->trySet(path, data, version, stat); });
     }
 
     void cleanupEphemeralNodes()

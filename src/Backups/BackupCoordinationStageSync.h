@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Common/ZooKeeper/ZooKeeperWithFaultInjection.h"
 #include <Common/ZooKeeper/Common.h>
 #include <Storages/MergeTree/ZooKeeperRetries.h>
 
@@ -13,14 +14,22 @@ class BackupCoordinationStageSync
 public:
     struct BackupKeeperSettings
     {
-        UInt64 keeper_max_retries;
-        UInt64 keeper_retry_initial_backoff_ms;
-        UInt64 keeper_retry_max_backoff_ms;
-        UInt64 batch_size_for_keeper_multiread;
+        UInt64 keeper_max_retries{0};
+        UInt64 keeper_retry_initial_backoff_ms{0};
+        UInt64 keeper_retry_max_backoff_ms{0};
+        UInt64 batch_size_for_keeper_multiread{10000};
+        Float64 keeper_fault_injection_probability{0};
+        UInt64 keeper_fault_injection_seed{42};
     };
 
+    using ZooKeeperRenewer = std::function<void(Coordination::ZooKeeperWithFaultInjection::Ptr)>;
+
     BackupCoordinationStageSync(
-        const String & root_zookeeper_path_, BackupKeeperSettings settings_, zkutil::GetZooKeeper get_zookeeper_, Poco::Logger * log_);
+        const String & root_zookeeper_path_,
+        BackupKeeperSettings settings_,
+        zkutil::GetZooKeeperWithFaultInjection get_zookeeper_,
+        ZooKeeperRenewer zookeeper_renewer_,
+        Poco::Logger * log_);
 
     /// Sets the stage of the current host and signal other hosts if there were other hosts waiting for that.
     void set(const String & current_host, const String & new_stage, const String & message);
@@ -37,13 +46,13 @@ private:
     void createRootNodes();
 
     struct State;
-    State readCurrentState(
-        zkutil::ZooKeeperPtr zookeeper, const Strings & zk_nodes, const Strings & all_hosts, const String & stage_to_wait) const;
+    State readCurrentState(const Strings & zk_nodes, const Strings & all_hosts, const String & stage_to_wait) const;
 
     Strings waitImpl(const Strings & all_hosts, const String & stage_to_wait, std::optional<std::chrono::milliseconds> timeout) const;
 
     String zookeeper_path;
-    zkutil::GetZooKeeper get_zookeeper;
+    zkutil::GetZooKeeperWithFaultInjection get_zookeeper;
+    ZooKeeperRenewer zookeeper_renewer;
     Poco::Logger * log;
     ZooKeeperRetriesInfo global_zookeeper_retries_info;
 };
